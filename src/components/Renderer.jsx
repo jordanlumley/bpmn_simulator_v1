@@ -3,26 +3,20 @@ import * as THREE from "three";
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 
-import { bpmnJson } from "../assets/json/latest";
+import { bpmnJson } from "../assets/json/latest.js";
 
 const scaleFactor = 0.2;
 
 var camera = null;
 
-var taskGroup = null;
-var planeGroup = null;
-var eventGroup = null;
-var gatewayGroup = null;
-var edgeGroup = null;
-
-
 var scene = null;
 var parentWrapper = null;
 
-var maxElemX = 0;
-var maxElemZ = 0;
-var minElemX = 0;
-var minElemZ = 0;
+var taskGroup, planeGroup, eventGroup, gatewayGroup, edgeGroup, streetGroup = null;
+
+var streetGltf, taskGltf;
+
+var maxElemX, maxElemZ, minElemX, minElemZ = 0;
 
 export default class Renderer extends React.Component {
     constructor(props) {
@@ -33,6 +27,9 @@ export default class Renderer extends React.Component {
         this.createStartEvent = this.createStartEvent.bind(this);
         this.createEndEvent = this.createEndEvent.bind(this);
         this.createGateWay = this.createGateWay.bind(this);
+        this.createStreet = this.createStreet.bind(this);
+        this.initStreet = this.initStreet.bind(this);
+        this.initTask = this.initTask.bind(this);
 
         var container = document.createElement('div');
         document.body.appendChild(container);
@@ -42,28 +39,28 @@ export default class Renderer extends React.Component {
         eventGroup = new THREE.Group();
         edgeGroup = new THREE.Group();
         gatewayGroup = new THREE.Group();
+        streetGroup = new THREE.Group();
 
 
         taskGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
+        streetGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
         planeGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
         eventGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
         edgeGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
         gatewayGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
 
-
-        var aspect = window.innerWidth / window.innerHeight;
-        var camera_d = 20;
-        camera = new THREE.OrthographicCamera(- camera_d * aspect, camera_d * aspect, camera_d, - camera_d, 1, 100000);
-        camera.position.set(2000, 2000, 2000); // all components equal
-
+        camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 10, 10000);
+        camera.position.set(200, 50, 200); // all components equal
 
         scene = new THREE.Scene();
         parentWrapper = new THREE.Group();
+        parentWrapper.position.set(-100, 0, -100);
+
         scene.add(parentWrapper);
         var groundMaterial = new THREE.MeshPhongMaterial({
             color: 0x6C6C6C
         });
-        var plane = new THREE.Mesh(new THREE.PlaneGeometry(2500, 2500), groundMaterial);
+        var plane = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), groundMaterial);
         plane.rotation.x = -Math.PI / 2;
         plane.receiveShadow = true;
         parentWrapper.add(plane);
@@ -116,13 +113,12 @@ export default class Renderer extends React.Component {
 
         container.appendChild(webglRenderer.domElement);
         // window.addEventListener('resize', onWindowResize, false);
-        parentWrapper.position.set(-100, 0, -100);
         // parentWrapper.position.multiplyScalar(2);
-
 
         var threeRenderer = function () {
             requestAnimationFrame(threeRenderer);
 
+            camera.lookAt(scene.position)
             webglRenderer.render(scene, camera);
         }
 
@@ -133,10 +129,10 @@ export default class Renderer extends React.Component {
         var that = this;
 
         var process = bpmnJson.definitions.process;
-        var taskLength = process.task.length;
         var startEvent = process.startEvent;
         var endEvent = process.endEvent;
         var gateway = process.exclusiveGateway;
+        var edges = bpmnJson.definitions.BPMNDiagram.BPMNPlane.BPMNEdge;
 
 
         var bpmnStartEventProps = bpmnJson.definitions.BPMNDiagram.BPMNPlane.BPMNShape;
@@ -144,14 +140,14 @@ export default class Renderer extends React.Component {
             return shape._bpmnElement === startEvent._id
         });
 
-        that.createStartEvent(startEventProps);
+        this.createStartEvent(startEventProps);
 
         var bpmnEndEventProps = bpmnJson.definitions.BPMNDiagram.BPMNPlane.BPMNShape;
         var endEventProps = bpmnEndEventProps.filter(function (shape) {
             return shape._bpmnElement === endEvent._id
         });
 
-        that.createEndEvent(endEventProps);
+        this.createEndEvent(endEventProps);
 
         gateway.map(function (g, i) {
             var bpmnGatewayProps = bpmnJson.definitions.BPMNDiagram.BPMNPlane.BPMNShape;
@@ -160,39 +156,56 @@ export default class Renderer extends React.Component {
             });
 
             that.createGateWay(gatewayProps);
-
-            that.createEdge(g);
         });
 
-        process.task.map(function (task, i) {
-            var bpmnTaskProps = bpmnJson.definitions.BPMNDiagram.BPMNPlane.BPMNShape;
-            var taskProps = bpmnTaskProps.filter(function (shape) {
-                return shape._bpmnElement === task._id
+        this.initTask(function () {
+            process.task.map(function (task) {
+                var bpmnTaskProps = bpmnJson.definitions.BPMNDiagram.BPMNPlane.BPMNShape;
+                var taskProps = bpmnTaskProps.filter(function (shape) {
+                    return shape._bpmnElement === task._id
+                });
+
+                var vertix = { x: taskProps[0].Bounds._x, z: taskProps[0].Bounds._y, y: 0.09 };
+
+                that.createTask(taskGltf, vertix, function (elem) {
+                    taskGroup.add(elem);
+                });
             });
 
-            that.createTask(i, task, taskProps, function (index) {
-                if (index >= taskLength - 1) {
-                    parentWrapper.add(taskGroup);
+            var borderMaterial = new THREE.MeshPhongMaterial({
+                color: 0x99999
+            });
+            var innerPlane = new THREE.Mesh(new THREE.PlaneGeometry(maxElemX, maxElemZ), borderMaterial);
+            innerPlane.rotation.x = -Math.PI / 2;
+            innerPlane.position.y = .1;
+            innerPlane.position.x = ((maxElemX + minElemX) / 2);
+            innerPlane.position.z = minElemZ;
+            innerPlane.receiveShadow = true;
 
-                    var borderMaterial = new THREE.MeshPhongMaterial({
-                        color: 0x99999
+            planeGroup.add(innerPlane);
+
+            parentWrapper.add(planeGroup)
+        });
+
+
+        edges.map(function (edge) {
+            that.createEdge(edge);
+        });
+
+        this.initStreet(function () {
+            edgeGroup.children.map(function (edge, i) {
+                edge.geometry.vertices.map(function (vertix) {
+                    that.createStreet(streetGltf, vertix, function (elem) {
+                        streetGroup.add(elem);
                     });
-                    var innerPlane = new THREE.Mesh(new THREE.PlaneGeometry(maxElemX, maxElemZ), borderMaterial);
-                    innerPlane.rotation.x = -Math.PI / 2;
-                    innerPlane.position.y = .1;
-                    innerPlane.position.x = ((maxElemX + minElemX) / 2);
-                    innerPlane.position.z = minElemZ;
-                    innerPlane.receiveShadow = true;
-
-                    planeGroup.add(innerPlane);
-
-                    parentWrapper.add(planeGroup)
-                }
+                });
             });
         });
 
         parentWrapper.add(eventGroup);
+        parentWrapper.add(taskGroup);
         parentWrapper.add(edgeGroup);
+        parentWrapper.add(streetGroup);
         parentWrapper.add(gatewayGroup);
     }
 
@@ -229,97 +242,87 @@ export default class Renderer extends React.Component {
         gatewayGroup.add(sphere);
     }
 
-    createTask(i, task, taskProps, cb) {
-        var that = this;
+    initTask(cb) {
         var loader = new GLTFLoader();
 
         loader.load('../assets/glb/task_hd.glb', function (gltf) {
             gltf.scene.traverse(function (node) {
                 if (node instanceof THREE.Mesh) {
                     node.castShadow = true;
-                    node.scale.set(5, 5, 5);
+                    // node.scale.set(5, 5, 5);
                 }
+                gltf.scene.scale.set(5, 5, 5);
             });
+            taskGltf = gltf.scene;
 
-            // gltf.scene.rotation.y = -150;
-            // gltf.scene.scale.set(.8, .8, .8);
-            gltf.scene.position.x = parseFloat(taskProps[0].Bounds._x);
-            gltf.scene.position.z = parseFloat(taskProps[0].Bounds._y);
-            gltf.scene.position.y = .09;
-
-            taskGroup.add(gltf.scene);
-
-            that.createEdge(task);
-
-            cb(i);
+            cb();
         }, undefined, function (error) {
             console.error(error);
         });
     };
 
+    createTask(elem, vertix, cb) {
+
+        var x = parseFloat(vertix.x);
+        var z = parseFloat(vertix.z);
+        var y = parseFloat(vertix.y);
+        elem.position.x = x;
+        elem.position.y = y;
+        elem.position.z = z;
+
+        var cloned = elem.clone();
+
+        cb(cloned);
+    };
+
     createEdge(elem) {
-        var that = this;
-        if (Array.isArray(elem.outgoing) && elem.outgoing.length > 1) {
-            elem.outgoing.map(function (id) {
-                elem.outgoing = [];
-                elem.outgoing = id;
-                that.createEdge(elem)
-            });
-        }
-        else if (Array.isArray(elem.incoming) && elem.incoming.length > 1) {
-            elem.incoming.map(function (id) {
-                elem.incoming = [];
-                elem.incoming = id;
-                that.createEdge(elem)
-            });
-        } else {
-            var bpmnEdgeProps = bpmnJson.definitions.BPMNDiagram.BPMNPlane.BPMNEdge;
-            var edgeEndProps = bpmnEdgeProps.filter(function (edge) {
-                return edge._bpmnElement === elem.outgoing
-            });
+        var geometry = new THREE.Geometry();
+        var vertices = [];
 
-            var edgeStartProps = bpmnEdgeProps.filter(function (edge) {
-                return edge._bpmnElement === elem.incoming
-            });
+        elem.waypoint.map(function (waypoint) {
+            var x = parseFloat(waypoint._x);
+            var z = parseFloat(waypoint._y);
+            vertices.push(
+                new THREE.Vector3(x, .2, z)
+            );
+        });
 
-            var material = new THREE.LineBasicMaterial({
-                color: 0x0000ff
-            });
+        vertices.map(function (vertix) {
+            geometry.vertices.push(vertix);
+        });
 
+        var material = new THREE.LineBasicMaterial({
+            color: 0x0000ff
+        });
 
-            var geometry = new THREE.Geometry();
-            var vertices = [];
-            var x1, x2, z1, z2;
-            if (edgeStartProps.length > 0) {
-                x1 = parseFloat(edgeStartProps[0].waypoint[0]._x);
-                x2 = parseFloat(edgeStartProps[0].waypoint[1]._x);
-                z1 = parseFloat(edgeStartProps[0].waypoint[0]._y);
-                z2 = parseFloat(edgeStartProps[0].waypoint[1]._y);
-                vertices.push(
-                    new THREE.Vector3(x1, .2, z1),
-                    new THREE.Vector3(x2, .2, z2)
-                );
-            }
-            if (edgeEndProps.length > 0) {
-                x1 = parseFloat(edgeEndProps[0].waypoint[0]._x);
-                x2 = parseFloat(edgeEndProps[0].waypoint[1]._x);
-                z1 = parseFloat(edgeEndProps[0].waypoint[0]._y);
-                z2 = parseFloat(edgeEndProps[0].waypoint[1]._y);
-                vertices.push(
-                    new THREE.Vector3(x1, .2, z1),
-                    new THREE.Vector3(x2, .2, z2)
-                );
-            }
-
-            vertices.map(function (vertix) {
-                geometry.vertices.push(vertix);
-            })
-
-
-            var line = new THREE.Line(geometry, material);
-            edgeGroup.add(line);
-        }
+        var line = new THREE.Line(geometry, material);
+        edgeGroup.add(line);
     }
+
+    initStreet(cb) {
+        var loader = new GLTFLoader();
+
+        loader.load('../assets/glb/street.glb', function (gltf) {
+            streetGltf = gltf.scene;
+
+            cb();
+        }, undefined, function (error) {
+            console.error(error);
+        });
+    };
+
+    createStreet(elem, vertix, cb) {
+        var x = parseFloat(vertix.x);
+        var z = parseFloat(vertix.z);
+        var y = parseFloat(vertix.y);
+        elem.position.x = x;
+        elem.position.y = y;
+        elem.position.z = z;
+
+        var cloned = elem.clone();
+
+        cb(cloned);
+    };
 
     render() {
         return (
