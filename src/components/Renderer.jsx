@@ -35,6 +35,8 @@ export default class Renderer extends React.Component {
         this.createGateWay = this.createGateWay.bind(this);
         this.initStreet = this.initStreet.bind(this);
         this.initTask = this.initTask.bind(this);
+        this.findUpParent = this.findUpParent.bind(this);
+        this.onClick = this.onClick.bind(this);
 
         var container = document.createElement('div');
         document.body.appendChild(container);
@@ -168,17 +170,13 @@ export default class Renderer extends React.Component {
 
         this.initTask(function () {
             process.task.map(function (task) {
-                if (task._id === 'sid-56ABB6A0-4A7D-4208-88E2-60665B9B8AF1') {
-                    console.log('asdf');
-                }
                 var bpmnTaskProps = bpmnJson.definitions.BPMNDiagram.BPMNPlane.BPMNShape;
                 var taskProps = bpmnTaskProps.filter(function (shape) {
                     return shape._bpmnElement === task._id
                 });
 
-
-                that.createGeneric(taskGltf, taskProps, function (elem) {
-                    elem.name = "my model";
+                var props = { ...task, ...taskProps[0] };
+                that.createGeneric(taskGltf, props, function (elem) {
                     parentWrapper.add(elem);
                 });
             });
@@ -284,7 +282,7 @@ export default class Renderer extends React.Component {
             });
 
             // gltf.scene.rotation.y = -150;
-            taskGltf = gltf.scene;
+            taskGltf = gltf;
 
             cb();
         }, undefined, function (error) {
@@ -332,16 +330,21 @@ export default class Renderer extends React.Component {
 
     createGeneric(elem, props, cb) {
 
-        var vertix = { x: parseFloat(props[0].Bounds._x), z: parseFloat(props[0].Bounds._y), y: 0.09 };
+        var vertix = { x: parseFloat(props.Bounds._x), z: parseFloat(props.Bounds._y), y: 0.09 };
 
-        var x = parseFloat(vertix.x + parseFloat(props[0].Bounds._width / 2));
-        var z = parseFloat(vertix.z + parseFloat(props[0].Bounds._height / 2));
+        var x = parseFloat(vertix.x + parseFloat(props.Bounds._width / 2));
+        var z = parseFloat(vertix.z + parseFloat(props.Bounds._height / 2));
         var y = parseFloat(vertix.y);
-        elem.position.x = x;
-        elem.position.y = y;
-        elem.position.z = z;
+        elem.scene.position.x = x;
+        elem.scene.position.y = y;
+        elem.scene.position.z = z;
 
-        var cloned = elem.clone();
+        elem.scene.userData = {
+            type: 'root',
+            props: props
+        }
+
+        var cloned = elem.scene.clone();
 
         cb(cloned);
     }
@@ -353,8 +356,36 @@ export default class Renderer extends React.Component {
         raycaster.setFromCamera(mouse, camera);
         var intersects = raycaster.intersectObjects(parentWrapper.children, true);
         for (var i = 0; i < intersects.length; i++) {
-            console.log(intersects[0].object.parent.name);
+            var rootElement = this.findUpParent(intersects[i].object, 'root');
+
+            if (rootElement && !rootElement.userData.props.contextMenuOpened) {
+                var geometry = new THREE.BoxGeometry(100, 100, 1);
+                var material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+                var cube = new THREE.Mesh(geometry, material);
+                cube.position.x = parseFloat(rootElement.userData.props.Bounds._x);
+                cube.position.z = parseFloat(rootElement.userData.props.Bounds._y);
+                cube.position.y = 100;
+                cube.rotation.y = -150;
+                cube.userData = {
+                    contextMenu: 'adsf'
+                }
+
+                rootElement.userData.props.contextMenuOpened = true;
+                parentWrapper.add(cube);
+                return;
+            }
         }
+    }
+
+    findUpParent(obj, tag) {
+        while (obj.parent) {
+            obj = obj.parent;
+            if (obj.userData) {
+                if (obj.userData.type === tag)
+                    return obj;
+            }
+        }
+        return null;
     }
 
     render() {
