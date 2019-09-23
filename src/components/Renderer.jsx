@@ -6,67 +6,65 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { bpmnJson } from "../assets/json/latest.js";
 
 const scaleFactor = 0.2;
+var webglRenderer;
+var camera;
 
-var camera = null;
+var scene;
+var parentWrapper;
 
-var scene = null;
-var parentWrapper = null;
+// var taskGroup, planeGroup, eventGroup, gatewayGroup, edgeGroup, streetGroup;
 
-var taskGroup, planeGroup, eventGroup, gatewayGroup, edgeGroup, streetGroup = null;
+var subPlaneBBox;
 
 var streetGltf, taskGltf;
 
 var maxElemX, maxElemZ, minElemX, minElemZ = 0;
 
+var raycaster;
+
+var mouse;
+
 export default class Renderer extends React.Component {
     constructor(props) {
         super(props)
 
-        this.createTask = this.createTask.bind(this);
+        this.createGeneric = this.createGeneric.bind(this);
         this.createEdge = this.createEdge.bind(this);
         this.createStartEvent = this.createStartEvent.bind(this);
         this.createEndEvent = this.createEndEvent.bind(this);
         this.createGateWay = this.createGateWay.bind(this);
-        this.createStreet = this.createStreet.bind(this);
         this.initStreet = this.initStreet.bind(this);
         this.initTask = this.initTask.bind(this);
 
         var container = document.createElement('div');
         document.body.appendChild(container);
 
-        taskGroup = new THREE.Group();
-        planeGroup = new THREE.Group();
-        eventGroup = new THREE.Group();
-        edgeGroup = new THREE.Group();
-        gatewayGroup = new THREE.Group();
-        streetGroup = new THREE.Group();
+        mouse = new THREE.Vector2();
+        raycaster = new THREE.Raycaster();
 
-
-        taskGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
-        streetGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
-        planeGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
-        eventGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
-        edgeGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
-        gatewayGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
+        // taskGroup = new THREE.Group();
+        // planeGroup = new THREE.Group();
+        // eventGroup = new THREE.Group();
+        // edgeGroup = new THREE.Group();
+        // gatewayGroup = new THREE.Group();
+        // streetGroup = new THREE.Group();
 
         camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 10, 10000);
         camera.position.set(200, 50, 200); // all components equal
 
         scene = new THREE.Scene();
         parentWrapper = new THREE.Group();
-        parentWrapper.position.set(-100, 0, -100);
 
-        scene.add(parentWrapper);
         var groundMaterial = new THREE.MeshPhongMaterial({
             color: 0x6C6C6C
         });
         var plane = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), groundMaterial);
         plane.rotation.x = -Math.PI / 2;
         plane.receiveShadow = true;
-        parentWrapper.add(plane);
+        scene.add(plane);
 
         // LIGHTS
-        parentWrapper.add(new THREE.AmbientLight(0x666666));
+        scene.add(new THREE.AmbientLight(0x666666));
 
         var light;
 
@@ -91,32 +89,42 @@ export default class Renderer extends React.Component {
 
         var helper = new THREE.DirectionalLightHelper(light, 5);
 
-        parentWrapper.add(light);
+        scene.add(light);
 
         var axesHelper = new THREE.AxesHelper(50);
 
         var size = 500;
         var divisions = 10;
         var gridHelper = new THREE.GridHelper(size, divisions);
-        parentWrapper.add(gridHelper);
+        scene.add(gridHelper);
 
-        parentWrapper.add(axesHelper);
+        scene.add(axesHelper);
 
         // RENDERER
-        var webglRenderer = new THREE.WebGLRenderer({ antialias: true });
+        webglRenderer = new THREE.WebGLRenderer({ antialias: true });
         webglRenderer.setSize(window.innerWidth, window.innerHeight);
         webglRenderer.shadowMapEnabled = true;
         webglRenderer.shadowMapSoft = true;
         webglRenderer.shadowMapType = THREE.PCFSoftShadowMap;
+        webglRenderer.domElement.addEventListener("click", this.onClick, true);
 
         var controls = new OrbitControls(camera, webglRenderer.domElement);
 
         container.appendChild(webglRenderer.domElement);
+
+
         // window.addEventListener('resize', onWindowResize, false);
         // parentWrapper.position.multiplyScalar(2);
+        // var bbox = new THREE.Box3().setFromObject(parentWrapper);
+
+        scene.add(parentWrapper);
+
 
         var threeRenderer = function () {
             requestAnimationFrame(threeRenderer);
+
+            parentWrapper.position.z = -(minElemZ);
+            parentWrapper.position.x = -(maxElemX / 2);
 
             camera.lookAt(scene.position)
             webglRenderer.render(scene, camera);
@@ -160,15 +168,18 @@ export default class Renderer extends React.Component {
 
         this.initTask(function () {
             process.task.map(function (task) {
+                if (task._id === 'sid-56ABB6A0-4A7D-4208-88E2-60665B9B8AF1') {
+                    console.log('asdf');
+                }
                 var bpmnTaskProps = bpmnJson.definitions.BPMNDiagram.BPMNPlane.BPMNShape;
                 var taskProps = bpmnTaskProps.filter(function (shape) {
                     return shape._bpmnElement === task._id
                 });
 
-                var vertix = { x: taskProps[0].Bounds._x, z: taskProps[0].Bounds._y, y: 0.09 };
 
-                that.createTask(taskGltf, vertix, function (elem) {
-                    taskGroup.add(elem);
+                that.createGeneric(taskGltf, taskProps, function (elem) {
+                    elem.name = "my model";
+                    parentWrapper.add(elem);
                 });
             });
 
@@ -182,9 +193,11 @@ export default class Renderer extends React.Component {
             innerPlane.position.z = minElemZ;
             innerPlane.receiveShadow = true;
 
-            planeGroup.add(innerPlane);
+            subPlaneBBox = new THREE.Box3().setFromObject(innerPlane)
 
-            parentWrapper.add(planeGroup)
+            parentWrapper.add(innerPlane);
+
+            // parentWrapper.add(planeGroup)
         });
 
 
@@ -192,45 +205,59 @@ export default class Renderer extends React.Component {
             that.createEdge(edge);
         });
 
-        this.initStreet(function () {
-            edgeGroup.children.map(function (edge, i) {
-                edge.geometry.vertices.map(function (vertix) {
-                    that.createStreet(streetGltf, vertix, function (elem) {
-                        streetGroup.add(elem);
-                    });
-                });
-            });
+        // this.initStreet(function () {
+        //     edgeGroup.children.map(function (edge, i) {
+        //         edge.geometry.vertices.map(function (vertix) {
+        //             that.createStreet(streetGltf, vertix, function (elem) {
+        //                 streetGroup.add(elem);
+        //             });
+        //         });
+        //     });
+        // });
+
+        // parentWrapper.add(eventGroup);
+        // parentWrapper.add(taskGroup);
+        // parentWrapper.add(edgeGroup);
+        // parentWrapper.add(streetGroup);
+        // parentWrapper.add(gatewayGroup);
+    }
+
+    createStartEvent(startEventProps) {
+        var loader = new GLTFLoader();
+
+        loader.load('../assets/glb/start.glb', function (gltf) {
+            gltf.scene.scale.set(5, 5, 5);
+            gltf.scene.position.x = parseFloat(startEventProps[0].Bounds._x);
+            gltf.scene.position.z = parseFloat(startEventProps[0].Bounds._y);
+            parentWrapper.add(gltf.scene);
+
+            minElemX = parseFloat(gltf.scene.position.x);
+            minElemZ = parseFloat(gltf.scene.position.z);
+        }, undefined, function (error) {
+            console.error(error);
         });
 
-        parentWrapper.add(eventGroup);
-        parentWrapper.add(taskGroup);
-        parentWrapper.add(edgeGroup);
-        parentWrapper.add(streetGroup);
-        parentWrapper.add(gatewayGroup);
+        // var geometry = new THREE.BoxGeometry(10, 10, 10);
+        // var material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+        // var cube = new THREE.Mesh(geometry, material);
+
     }
 
-    createStartEvent(startEventProps, cb) {
-        var geometry = new THREE.BoxGeometry(10, 10, 10);
-        var material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
-        var cube = new THREE.Mesh(geometry, material);
-        cube.position.x = parseFloat(startEventProps[0].Bounds._x);
-        cube.position.z = parseFloat(startEventProps[0].Bounds._y);
-        eventGroup.add(cube);
+    createEndEvent(endEventProps) {
 
-        minElemX = parseFloat(cube.position.x);
-        minElemZ = parseFloat(cube.position.z);
-    }
+        var loader = new GLTFLoader();
 
-    createEndEvent(endEventProps, cb) {
-        var geometry = new THREE.BoxGeometry(10, 10, 10);
-        var material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
-        var cube = new THREE.Mesh(geometry, material);
-        cube.position.x = parseFloat(endEventProps[0].Bounds._x);
-        cube.position.z = parseFloat(endEventProps[0].Bounds._y);
-        eventGroup.add(cube);
+        loader.load('../assets/glb/end.glb', function (gltf) {
+            gltf.scene.scale.set(5, 5, 5);
+            gltf.scene.position.x = parseFloat(endEventProps[0].Bounds._x);
+            gltf.scene.position.z = parseFloat(endEventProps[0].Bounds._y);
+            parentWrapper.add(gltf.scene);
 
-        maxElemX = parseFloat(cube.position.x);
-        maxElemZ = parseFloat(cube.position.z);
+            maxElemX = parseFloat(gltf.scene.position.x);
+            maxElemZ = parseFloat(gltf.scene.position.z);
+        }, undefined, function (error) {
+            console.error(error);
+        });
     }
 
     createGateWay(gatewayProps, cb) {
@@ -239,7 +266,8 @@ export default class Renderer extends React.Component {
         var sphere = new THREE.Mesh(geometry, material);
         sphere.position.x = parseFloat(gatewayProps[0].Bounds._x);
         sphere.position.z = parseFloat(gatewayProps[0].Bounds._y);
-        gatewayGroup.add(sphere);
+        sphere.scale.set(5, 5, 5);
+        parentWrapper.add(sphere);
     }
 
     initTask(cb) {
@@ -251,28 +279,17 @@ export default class Renderer extends React.Component {
                     node.castShadow = true;
                     // node.scale.set(5, 5, 5);
                 }
+                gltf.scene.rotation.y = -150;
                 gltf.scene.scale.set(5, 5, 5);
             });
+
+            // gltf.scene.rotation.y = -150;
             taskGltf = gltf.scene;
 
             cb();
         }, undefined, function (error) {
             console.error(error);
         });
-    };
-
-    createTask(elem, vertix, cb) {
-
-        var x = parseFloat(vertix.x);
-        var z = parseFloat(vertix.z);
-        var y = parseFloat(vertix.y);
-        elem.position.x = x;
-        elem.position.y = y;
-        elem.position.z = z;
-
-        var cloned = elem.clone();
-
-        cb(cloned);
     };
 
     createEdge(elem) {
@@ -296,13 +313,15 @@ export default class Renderer extends React.Component {
         });
 
         var line = new THREE.Line(geometry, material);
-        edgeGroup.add(line);
+        parentWrapper.add(line);
     }
 
     initStreet(cb) {
         var loader = new GLTFLoader();
 
         loader.load('../assets/glb/street.glb', function (gltf) {
+            // gltf.scene.scale.set(5, 5, 5);
+            gltf.scene.rotation.y = 190;
             streetGltf = gltf.scene;
 
             cb();
@@ -311,9 +330,12 @@ export default class Renderer extends React.Component {
         });
     };
 
-    createStreet(elem, vertix, cb) {
-        var x = parseFloat(vertix.x);
-        var z = parseFloat(vertix.z);
+    createGeneric(elem, props, cb) {
+
+        var vertix = { x: parseFloat(props[0].Bounds._x), z: parseFloat(props[0].Bounds._y), y: 0.09 };
+
+        var x = parseFloat(vertix.x + parseFloat(props[0].Bounds._width / 2));
+        var z = parseFloat(vertix.z + parseFloat(props[0].Bounds._height / 2));
         var y = parseFloat(vertix.y);
         elem.position.x = x;
         elem.position.y = y;
@@ -322,7 +344,18 @@ export default class Renderer extends React.Component {
         var cloned = elem.clone();
 
         cb(cloned);
-    };
+    }
+
+    onClick(e) {
+        e.preventDefault();
+        mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+        var intersects = raycaster.intersectObjects(parentWrapper.children, true);
+        for (var i = 0; i < intersects.length; i++) {
+            console.log(intersects[0].object.parent.name);
+        }
+    }
 
     render() {
         return (
