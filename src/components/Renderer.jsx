@@ -2,14 +2,15 @@ import React from "react";
 import * as THREE from "three";
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 
 import { bpmnJson } from "../assets/json/latest.js";
 
-const scaleFactor = 0.2;
-var webglRenderer;
-var camera;
 
-var scene;
+const fontJson = require("../assets/json/font.json");
+
+const scaleFactor = 0.2;
+var webglRenderer, camera, scene, labelRenderer;
 var parentWrapper;
 
 // var taskGroup, planeGroup, eventGroup, gatewayGroup, edgeGroup, streetGroup;
@@ -23,6 +24,11 @@ var maxElemX, maxElemZ, minElemX, minElemZ = 0;
 var raycaster;
 
 var mouse;
+
+var textlabels = [];
+
+var container;
+
 
 export default class Renderer extends React.Component {
     constructor(props) {
@@ -38,7 +44,7 @@ export default class Renderer extends React.Component {
         this.findUpParent = this.findUpParent.bind(this);
         this.onClick = this.onClick.bind(this);
 
-        var container = document.createElement('div');
+        container = document.createElement('div');
         document.body.appendChild(container);
 
         mouse = new THREE.Vector2();
@@ -109,9 +115,6 @@ export default class Renderer extends React.Component {
         webglRenderer.shadowMapSoft = true;
         webglRenderer.shadowMapType = THREE.PCFSoftShadowMap;
         webglRenderer.domElement.addEventListener("click", this.onClick, true);
-
-        var controls = new OrbitControls(camera, webglRenderer.domElement);
-
         container.appendChild(webglRenderer.domElement);
 
 
@@ -121,15 +124,29 @@ export default class Renderer extends React.Component {
 
         scene.add(parentWrapper);
 
+        labelRenderer = new CSS2DRenderer();
+        labelRenderer.setSize(window.innerWidth, window.innerHeight);
+        labelRenderer.domElement.style.position = 'absolute';
+        labelRenderer.domElement.style.top = 0;
+        container.appendChild(labelRenderer.domElement);
+
+        var controls = new OrbitControls(camera, labelRenderer.domElement);
+
 
         var threeRenderer = function () {
             requestAnimationFrame(threeRenderer);
+
+            for (var i = 0; i < textlabels.length; i++) {
+                textlabels[i].updatePosition();
+            }
 
             parentWrapper.position.z = -(minElemZ);
             parentWrapper.position.x = -(maxElemX / 2);
 
             camera.lookAt(scene.position)
+
             webglRenderer.render(scene, camera);
+            labelRenderer.render(scene, camera);
         }
 
         threeRenderer();
@@ -346,6 +363,14 @@ export default class Renderer extends React.Component {
 
         var cloned = elem.scene.clone();
 
+        var earthDiv = document.createElement('div');
+        earthDiv.className = 'label';
+        earthDiv.textContent = 'Earth';
+        earthDiv.style.marginTop = '-1em';
+        var earthLabel = new CSS2DObject(earthDiv);
+        earthLabel.position.set(0, 1, 0);
+        cloned.add(earthLabel);
+
         cb(cloned);
     }
 
@@ -370,6 +395,7 @@ export default class Renderer extends React.Component {
                     contextMenu: 'adsf'
                 }
 
+
                 rootElement.userData.props.contextMenuOpened = true;
                 parentWrapper.add(cube);
                 return;
@@ -387,6 +413,7 @@ export default class Renderer extends React.Component {
         }
         return null;
     }
+
 
     render() {
         return (
